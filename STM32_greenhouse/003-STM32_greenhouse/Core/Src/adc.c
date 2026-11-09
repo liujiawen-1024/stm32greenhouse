@@ -21,7 +21,8 @@
 #include "adc.h"
 
 /* USER CODE BEGIN 0 */
-
+#define SOIL_MIN  0
+#define SOIL_MAX  4095
 /* USER CODE END 0 */
 
 ADC_HandleTypeDef hadc1;
@@ -64,7 +65,7 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN ADC1_Init 2 */
-
+  HAL_ADCEx_Calibration_Start(&hadc1);
   /* USER CODE END ADC1_Init 2 */
 
 }
@@ -119,5 +120,15 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
 
 /* USER CODE BEGIN 1 */
 
+void ADC_GetSoilVal(uint8_t *soil_val) {
+  uint32_t adc_val = 0;
+  for (int i = 0 ; i < 10 ; i++) {
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK) {
+      adc_val += HAL_ADC_GetValue(&hadc1);
+    }
+  }
+  adc_val /= 10;
+  *soil_val= (adc_val - SOIL_MIN) * 100 / (SOIL_MAX - SOIL_MIN);
+}
 /* USER CODE END 1 */
-
