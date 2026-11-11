@@ -22,6 +22,7 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_event.h"
 #include "app_state.h"
 /* USER CODE END Includes */
 
@@ -32,14 +33,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define KEY_DEBOUNCE_MS 20  // 按键去抖时间
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
 /* USER CODE END PM */
-
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
@@ -333,5 +333,27 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  static uint32_t last_tick[6] = {0};
+  const uint32_t now = HAL_GetTick();
+  uint8_t idx;
+
+  switch (GPIO_Pin) {
+    case KEY1_Pin: idx = 0; break;
+    case KEY2_Pin: idx = 1; break;
+    case KEY3_Pin: idx = 2; break;
+    case KEY4_Pin: idx = 3; break;
+    case KEY5_Pin: idx = 4; break;
+    case KEY6_Pin: idx = 5; break;
+    default: return;
+  }
+
+  if (now - last_tick[idx] < KEY_DEBOUNCE_MS) return;
+  last_tick[idx] = now;
+
+  EV_KeyPost(idx);
+}
 
 /* USER CODE END 1 */

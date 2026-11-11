@@ -416,4 +416,5 @@ void OLED_ALL(void) {
 		case 4:OLED_ShowState(&g_app);break;
 		default:OLED_ShowHome(&g_app);break;
 	}
+	OLED_SetData(&g_app);
 }

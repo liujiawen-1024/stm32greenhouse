@@ -45,7 +45,11 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/dht11.c
         Core/Src/bh1750.c
         Core/Inc/adc.h
-        Core/Src/adc.c)
+        Core/Src/adc.c
+        Core/Inc/app.h
+        Core/Src/app.c
+        Core/Src/app_event.c
+        Core/Inc/app_event.h)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)

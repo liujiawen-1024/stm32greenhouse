@@ -57,9 +57,9 @@ void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Channel = ADC_CHANNEL_6;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -84,11 +84,11 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**ADC1 GPIO Configuration
-    PA0-WKUP     ------> ADC1_IN0
+    PA6     ------> ADC1_IN6
     */
-    GPIO_InitStruct.Pin = SOIL_Pin;
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    HAL_GPIO_Init(SOIL_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /* USER CODE BEGIN ADC1_MspInit 1 */
 
@@ -108,9 +108,9 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
     __HAL_RCC_ADC1_CLK_DISABLE();
 
     /**ADC1 GPIO Configuration
-    PA0-WKUP     ------> ADC1_IN0
+    PA6     ------> ADC1_IN6
     */
-    HAL_GPIO_DeInit(SOIL_GPIO_Port, SOIL_Pin);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_6);
 
   /* USER CODE BEGIN ADC1_MspDeInit 1 */
 
@@ -132,3 +132,4 @@ void ADC_GetSoilVal(uint8_t *soil_val) {
   *soil_val= (adc_val - SOIL_MIN) * 100 / (SOIL_MAX - SOIL_MIN);
 }
 /* USER CODE END 1 */
+
