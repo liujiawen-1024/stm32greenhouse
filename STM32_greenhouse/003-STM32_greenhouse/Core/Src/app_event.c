@@ -5,7 +5,7 @@ __IO static uint8_t s_key_event      = 0;
 __IO static uint8_t s_sample_pending = 0;
 
 void EV_KeyPost(uint8_t idx) {
-    if (idx < KEY_IDX_MAX) s_key_event |= (uint8_t)(1u << idx);
+    if (idx < KEY_IDX_MAX) s_key_event = (uint8_t)(1u << idx);
 }
 
 void EV_SamplePost(void) {

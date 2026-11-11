@@ -12,6 +12,8 @@ __IO static uint8_t data_add = 0 ;
 __IO static uint8_t data_sub = 0 ;
 __IO static uint8_t data_sw = 0 ;
 
+#define TEMP_SCOPE 60   
+
 void APP_Init(void) {
     OLED_Init();
     OLED_CLS();
@@ -81,11 +83,15 @@ void APP_Key(void) {
         switch (g_app.cursor_sw) {
             case 1:if (data_sw == 1){data_sw = 0;g_app.alarm = !g_app.alarm;} break;
             case 2:if (data_sw == 1){data_sw = 0;g_app.ctrl_mode = !g_app.ctrl_mode;} break;
-            case 3:if (data_sw == 1){data_sw = 0;g_app.env_sw.fan = !g_app.env_sw.fan;} break;
-            case 4:if (data_sw == 1){data_sw = 0;g_app.env_sw.pump = !g_app.env_sw.pump;} break;
-            case 5:if (data_sw == 1){data_sw = 0;g_app.env_sw.humi = !g_app.env_sw.humi;} break;
-            case 6:if (data_sw == 1){data_sw = 0;g_app.env_sw.ill  = !g_app.env_sw.ill ;} break;
+            case 3:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.fan = !g_app.env_sw.fan;} break;
+            case 4:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.pump = !g_app.env_sw.pump;} break;
+            case 5:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.humi = !g_app.env_sw.humi;} break;
+            case 6:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.ill  = !g_app.env_sw.ill ;} break;
             default:break;
         }
     }
+}
+
+void APP_Data(void) {
+
 }
