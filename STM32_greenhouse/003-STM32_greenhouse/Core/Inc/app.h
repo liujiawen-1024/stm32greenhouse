@@ -5,5 +5,6 @@
 
 void APP_Init(void);
 void APP_Key(void);
+void APP_Data(void);
 
 #endif //APP_H
