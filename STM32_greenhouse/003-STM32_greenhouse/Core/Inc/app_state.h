@@ -3,6 +3,11 @@
 
 // 业务状态的唯一定义点与初始化
 #include "stdint.h"
+#include "main.h"
+/* 注意：此处只能声明为 extern，唯一实体在 app_state.c 中定义。
+   若写成 static，每个包含本头文件的 .c 都会得到各自独立的一份副本，
+   ISR 里置 1、main.c 里永远读到 0，条件判断将永远不成立。 */
+extern __IO uint8_t g_get_data_flag; // 1 表示获取数据，0 表示不获取数据
 
 /* 数据模型 */
 typedef struct {

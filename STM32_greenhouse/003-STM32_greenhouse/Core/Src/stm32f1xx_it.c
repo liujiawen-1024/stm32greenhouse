@@ -356,4 +356,16 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   EV_KeyPost(idx);
 }
 
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  static uint32_t count5s = 0;
+  if (htim->Instance == TIM3) {
+    count5s++;
+    if (count5s >= 5000) {
+      count5s = 0;
+      g_get_data_flag = 1u;
+    }
+  }
+}
+
 /* USER CODE END 1 */
