@@ -8,7 +8,7 @@
    若写成 static，每个包含本头文件的 .c 都会得到各自独立的一份副本，
    ISR 里置 1、main.c 里永远读到 0，条件判断将永远不成立。 */
 extern __IO uint8_t g_get_data_flag; // 1 表示获取数据，0 表示不获取数据
-
+extern __IO uint8_t Serial_RxFlag;
 /* 数据模型 */
 typedef struct {
     int8_t  temp  ;   // 温度

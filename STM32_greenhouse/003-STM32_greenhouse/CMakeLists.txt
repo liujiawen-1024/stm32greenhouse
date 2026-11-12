@@ -50,8 +50,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/app.c
         Core/Src/app_event.c
         Core/Inc/app_event.h
-        Core/Inc/cJSON.h
-        Core/Src/cJSON.c)
+)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)

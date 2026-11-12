@@ -2,6 +2,7 @@
 
 /* 全局定时采集标志：唯一定义点（对应 app_state.h 中的 extern 声明） */
 __IO uint8_t g_get_data_flag = 0u;
+__IO uint8_t Serial_RxFlag = 0;
 
 app_state_t g_app = {
     .page = PAGE_HOME,

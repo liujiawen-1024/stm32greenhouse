@@ -24,4 +24,5 @@ uint8_t ESP01S_Init(void);
 void ESP01S_Send_Data(void);
 void ESP01S_Send_TH(void);
 void ESP01S_Send_SW(void);
+void ESP01S_ParseMQTTMessage(void);
 #endif //ESP_01S_H
