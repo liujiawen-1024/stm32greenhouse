@@ -2,11 +2,24 @@
 #include "usart.h"
 #include "string.h"
 #include "app_state.h"
+#include "app.h"
 
-// 中断专用的后台接收缓冲区
-static char rx_buf[256] = {0};
-static uint16_t rx_idx = 0;
-static uint8_t rx_byte = 0;
+// 接收缓冲：环形原始日志 + 单帧组装（ISR 只做搬运，解析在主循环）
+#define ESP01S_RAW_MAX      256u    /* 环形原始日志上限，给 ESP01S_WaitACK 用 */
+#define ESP01S_FRAME_MAX    160u    /* 单帧上限，够放下 MQTTSUBRECV 报文 */
+
+static char     rx_buf[ESP01S_RAW_MAX] = {0};
+static uint16_t rx_head = 0u;           /* 环形写指针 */
+static uint16_t rx_cnt  = 0u;           /* 环形已存字节数 */
+static uint8_t  rx_byte = 0u;
+
+static char     s_frame[ESP01S_FRAME_MAX] = {0};   /* 中断内组装中的帧 */
+static uint16_t s_frame_len   = 0u;
+static uint8_t  s_frame_state = 0u;                /* 0 空闲 / 1 收帧 / 2 已收 '\r' */
+static uint8_t  s_frame_ovf   = 0u;                /* 1 = 本帧超长，作废 */
+
+static __IO uint8_t Serial_RxDrop = 0u;            /* 丢弃帧计数，调试可读 */
+static __IO uint8_t Serial_RxErr  = 0u;            /* 串口错误/重挂失败次数 */
 
 /******轻量 JSON 取值******/
 #define JF_KEY_MAX_LEN      12
@@ -20,58 +33,111 @@ typedef enum {
     JF_U8
 } jf_type_t;
 
+typedef enum {
+    JF_ROLE_DATA = 0,   /* 普通数据 */
+    JF_ROLE_MODE,       /* 手自动模式位 */
+    JF_ROLE_SWITCH      /* 执行器开关：收到即视为一次手动动作 */
+} jf_role_t;
+
 typedef struct {
     const char *key;
     void       *dst;
     jf_type_t   type;
     int32_t     lo;
     int32_t     hi;
-    uint8_t     manual_only;   /* 1 = 仅手动模式下接受 */
+    jf_role_t   role;
 } jf_field_t;
 
 /******字段表******/
 static const jf_field_t k_jf_fields[] = {
-    { "Ytemp",   &g_app.env_yth.ytemp_th, JF_I8, YTH_TEMP_MIN, YTH_TEMP_MAX, 0u },
-    { "Yhumi",   &g_app.env_yth.yhumi_th, JF_U8, 0,            YTH_PCT_MAX,  0u },
-    { "Yill",    &g_app.env_yth.yill_th,  JF_U8, 0,            YTH_PCT_MAX,  0u },
-    { "Ysoil",   &g_app.env_yth.ysoil_th, JF_U8, 0,            YTH_PCT_MAX,  0u },
-    { "CMode",   &g_app.ctrl_mode,        JF_U8, 0,            YTH_FLAG_MAX, 0u },
-    { "Warning", &g_app.alarm,            JF_U8, 0,            YTH_FLAG_MAX, 0u },
-    { "fan",     &g_app.env_sw.fan,       JF_U8, 0,            YTH_FLAG_MAX, 1u },
-    { "pump",    &g_app.env_sw.pump,      JF_U8, 0,            YTH_FLAG_MAX, 1u },
-    /* [待补充] 第 9 个字段确认后在此加一行 */
+    { "Ytemp",   &g_app.env_yth.ytemp_th, JF_I8, YTH_TEMP_MIN, YTH_TEMP_MAX, JF_ROLE_DATA   },
+    { "Yhumi",   &g_app.env_yth.yhumi_th, JF_U8, 0,            YTH_PCT_MAX,  JF_ROLE_DATA   },
+    { "Yill",    &g_app.env_yth.yill_th,  JF_U8, 0,            YTH_PCT_MAX,  JF_ROLE_DATA   },
+    { "Ysoil",   &g_app.env_yth.ysoil_th, JF_U8, 0,            YTH_PCT_MAX,  JF_ROLE_DATA   },
+    { "CMode",   &g_app.ctrl_mode,        JF_U8, 0,            YTH_FLAG_MAX, JF_ROLE_MODE   },
+    { "Warning", &g_app.alarm,            JF_U8, 0,            YTH_FLAG_MAX, JF_ROLE_DATA   },
+    { "fan",     &g_app.env_sw.fan_on,       JF_U8, 0,            YTH_FLAG_MAX, JF_ROLE_SWITCH },
+    { "pump",    &g_app.env_sw.pump_on,      JF_U8, 0,            YTH_FLAG_MAX, JF_ROLE_SWITCH },
+    { "mist",    &g_app.env_sw.mist_on,      JF_U8, 0,            YTH_FLAG_MAX, JF_ROLE_SWITCH },
+    { "lamp",    &g_app.env_sw.lamp_on,      JF_U8, 0,            YTH_FLAG_MAX, JF_ROLE_SWITCH },
 };
 
 #define JF_FIELD_CNT  (sizeof(k_jf_fields) / sizeof(k_jf_fields[0]))
 
-static uint8_t Serial_RxPacket[64];
+static uint8_t Serial_RxPacket[ESP01S_FRAME_MAX] = {0};
+
+// 清空函数
+static void ESP01S_FlushRx(void) {
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    rx_head = 0u;
+    rx_cnt  = 0u;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    __set_PRIMASK(primask);
+}
+
+/* 环形缓冲写入：中断上下文调用 */
+static void rx_push(uint8_t b)
+{
+    rx_buf[rx_head] = (char)b;
+    rx_head = (uint16_t)((rx_head + 1u) % ESP01S_RAW_MAX);
+    if (rx_cnt < ESP01S_RAW_MAX) { rx_cnt++; }
+}
+
+/* 环形缓冲里是否含 pat：主循环上下文调用 */
+static uint8_t rx_contains(const char *pat)
+{
+    const uint16_t n = (uint16_t)strlen(pat);
+    uint16_t i;
+    uint16_t j;
+
+    if ((n == 0u) || (rx_cnt < n)) { return 0u; }
+
+    for (i = 0u; i <= (uint16_t)(rx_cnt - n); i++) {
+        for (j = 0u; j < n; j++) {
+            const uint16_t idx =
+                (uint16_t)(((rx_head + ESP01S_RAW_MAX - rx_cnt) + i + j) % ESP01S_RAW_MAX);
+            if (rx_buf[idx] != pat[j]) { break; }
+        }
+        if (j == n) { return 1u; }
+    }
+    return 0u;
+}
+
+/* 刚写入的字节是否构成 pat 的结尾：中断上下文调用，开销 O(strlen(pat)) */
+static uint8_t rx_endswith(const char *pat)
+{
+    const uint16_t n = (uint16_t)strlen(pat);
+    uint16_t i;
+
+    if ((n == 0u) || (rx_cnt < n)) { return 0u; }
+
+    for (i = 0u; i < n; i++) {
+        const uint16_t idx = (uint16_t)((rx_head + ESP01S_RAW_MAX - n + i) % ESP01S_RAW_MAX);
+        if (rx_buf[idx] != pat[i]) { return 0u; }
+    }
+    return 1u;
+}
 
 // 等待函数
 static uint8_t ESP01S_WaitACK(const char *expect, uint32_t timeout) {
     const uint32_t t0 = HAL_GetTick();
 
     // 发指令前，清空中断缓冲
-    rx_idx = 0;
-    memset(rx_buf, 0, sizeof(rx_buf));
+    ESP01S_FlushRx();
 
     while ((HAL_GetTick() - t0) < timeout) {
-        // 只要有中断收进来的数据，直接对比
-        if (strstr(rx_buf, expect) != NULL) {
-            return 1;
+        // 只要有中断收进来的数据，直接对比（环形缓冲，不再依赖 '\0' 结尾）
+        if (rx_contains(expect) != 0u) {
+            return 1u;
         }
         // 顺便检测一下是否掉线
-        if (strstr(rx_buf, "WIFI DISCONNECT") != NULL) {
-            g_app.online = 0;
-            return 0;
+        if (rx_contains("WIFI DISCONNECT") != 0u) {
+            g_app.online = 0u;
+            return 0u;
         }
     }
-    return 0;
-}
-
-// 清空函数
-static void ESP01S_FlushRx(void) {
-    rx_idx = 0;
-    memset(rx_buf, 0, sizeof(rx_buf));
+    return 0u;
 }
 
 uint8_t ESP01S_Init(void) {
@@ -180,10 +246,10 @@ void ESP01S_Send_SW(void) {
     sprintf(send_buf, MQTT_PUB_HEAD
               "\\\"fan\\\":{\\\"value\\\":%d}\\,"
               "\\\"pump\\\":{\\\"value\\\":%d}\\,"
-              "\\\"humi\\\":{\\\"value\\\":%d}\\,"
-              "\\\"ill\\\":{\\\"value\\\":%d}"
+              "\\\"mist\\\":{\\\"value\\\":%d}\\,"
+              "\\\"lamp\\\":{\\\"value\\\":%d}"
               MQTT_PUB_TAIL,
-              g_app.env_sw.fan, g_app.env_sw.pump, g_app.env_sw.humi, g_app.env_sw.ill);
+              g_app.env_sw.fan_on, g_app.env_sw.pump_on, g_app.env_sw.mist_on, g_app.env_sw.lamp_on);
 
     HAL_UART_Transmit(&huart2, (uint8_t *)send_buf, strlen(send_buf), 1000);
     if (!ESP01S_WaitACK("OK", 1000)) {
@@ -306,89 +372,124 @@ void ESP01S_ParseMQTTMessage(void)
     const char *body;
     const char *body_end;
     uint8_t updated = 0u;
+    uint8_t manual_hit = 0u;
 
     if (Serial_RxFlag == 0u) { return; }
-    Serial_RxFlag = 0u;
 
     msg = (const char *)Serial_RxPacket;
 
     /* 只处理属性下发；自己上报的回显（+MQTTPUB 那行也含 params）不当命令 */
-    if (strstr(msg, "+MQTTPUB") != NULL) { return; }
-    if (strstr(msg, "params") == NULL)   { return; }
+    if (strstr(msg, "+MQTTPUB") == NULL) {
+        if (strstr(msg, "params") != NULL) {
+            if (json_params_scope(msg, &body, &body_end) == 0u) {
+                printf("mqtt: no params\r\n");
+            } else {
+                for (uint32_t i = 0u; i < JF_FIELD_CNT; i++) {
+                    const jf_field_t *f = &k_jf_fields[i];
+                    int32_t v;
 
-    if (json_params_scope(msg, &body, &body_end) == 0u) {
-        printf("mqtt: no params\r\n");
-        return;
+                    if (json_atoi(json_value_start(body, body_end, f->key), body_end, &v) == 0u) {
+                        continue;                  /* 字段缺失或非法：保持原值 */
+                    }
+                    v = jf_clamp(v, f->lo, f->hi); /* 超范围钳到上下限，不拒绝 */
+
+                    if (f->type == JF_I8) {
+                        *(int8_t *)f->dst  = (int8_t)v;
+                    } else {
+                        *(uint8_t *)f->dst = (uint8_t)v;
+                    }
+                    updated++;
+
+                    /* 开关指令 = 一次手动动作；CMode=1 也进手动，CMode=0 是显式交还自动 */
+                    if ((f->role == JF_ROLE_SWITCH) ||
+                        ((f->role == JF_ROLE_MODE) && (v != 0))) {
+                        manual_hit = 1u;
+                    }
+                }
+
+                if (manual_hit != 0u) {
+                    APP_ManualTouch();         /* 进入手动 + 刷新 1 分钟计时 */
+                }
+                if (updated != 0u) {
+                    printf("mqtt params ok:%u\r\n", (unsigned)updated);
+                }
+            }
+        }
     }
 
-    for (uint32_t i = 0u; i < JF_FIELD_CNT; i++) {
-        const jf_field_t *f = &k_jf_fields[i];
-        int32_t v;
-
-        if ((f->manual_only != 0u) && (g_app.ctrl_mode == 0u)) {
-            continue;                     /* 自动模式下开关由 APP_Data_Ctrl() 决定 */
-        }
-        if (json_atoi(json_value_start(body, body_end, f->key), body_end, &v) == 0u) {
-            continue;                     /* 字段缺失或非法：保持原值 */
-        }
-        v = jf_clamp(v, f->lo, f->hi);    /* 超范围钳到上下限，不拒绝 */
-
-        if (f->type == JF_I8) {
-            *(int8_t *)f->dst  = (int8_t)v;
-        } else {
-            *(uint8_t *)f->dst = (uint8_t)v;
-        }
-        updated++;
-    }
-
-    printf("mqtt params ok:%u\r\n", (unsigned)updated);
+    Serial_RxFlag = 0u;   /* 全部处理完才放行下一帧 */
 }
 
 // 中断回调
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART2) {
-        // 关键字状态机 ， 根据接收到的数据更新状态机状态
-        static uint8_t RxState   = 0;   // 当前状态机状态的静态变量
-        static uint8_t pRxPacket = 0;   // 当前接收数据位置的静态变量
-        uint8_t RxData = rx_byte;
-        if (RxState == 0)
-        {
-            if (RxData == '+' && Serial_RxFlag == 0)
-            {
-                Serial_RxPacket[0] = '+';
-                RxState = 1;
-                pRxPacket = 1;
+    uint8_t b;
+
+    /* 只处理 ESP-01S 所在的 USART2；USART1 由 _write() 阻塞发送，不开中断 */
+    if (huart->Instance != USART2) { return; }
+
+    b = rx_byte;
+
+    /* 1. 原始日志进环形缓冲；掉线关键字只比较刚到的尾部，不在中断里 strstr */
+    rx_push(b);
+    if (rx_endswith("WIFI DISCONNECT") != 0u) {
+        g_app.online = 0u;
+    }
+
+    /* 2. 单帧组装：'+' 起头，'\r' 结束，'\n' 提交 */
+    switch (s_frame_state) {
+    case 0u:
+        if ((b == (uint8_t)'+') && (Serial_RxFlag == 0u)) {
+            s_frame[0] = '+';
+            s_frame_len = 1u;
+            s_frame_ovf = 0u;
+            s_frame_state = 1u;
+        }
+        break;
+
+    case 1u:
+        if (b == (uint8_t)'\r') {
+            s_frame_state = 2u;
+        } else if (s_frame_len < (ESP01S_FRAME_MAX - 1u)) {
+            s_frame[s_frame_len] = (char)b;
+            s_frame_len++;
+        } else {
+            s_frame_ovf = 1u;           /* 超长：本帧作废，不交付半截 JSON */
+        }
+        break;
+
+    default:                            /* s_frame_state == 2 */
+        if (b == (uint8_t)'\n') {
+            if ((s_frame_ovf == 0u) && (Serial_RxFlag == 0u)) {
+                s_frame[s_frame_len] = '\0';
+                memcpy(Serial_RxPacket, s_frame, (size_t)s_frame_len + 1u);
+                Serial_RxFlag = 1u;     /* 整帧就绪，交给 ESP01S_ParseMQTTMessage() */
+            } else {
+                Serial_RxDrop++;        /* 上一条未解析或本帧溢出，丢弃并计数 */
             }
         }
-        else if (RxState == 1)
-        {
-            if (RxData == '\r')
-                RxState = 2;
-            else if (pRxPacket < sizeof(Serial_RxPacket) - 1)
-                Serial_RxPacket[pRxPacket++] = RxData;
-        }
-        else if (RxState == 2)
-        {
-            if (RxData == '\n')
-            {
-                RxState = 0;
-                Serial_RxPacket[pRxPacket] = '\0';
-                Serial_RxFlag = 1;
-            }
-            else
-                RxState = 0;
-        }
-        // 关键字监听 ， WIFI掉线时触发
-        if (rx_idx < sizeof(rx_buf) - 1) {
-            rx_buf[rx_idx++] = rx_byte;
-            rx_buf[rx_idx] = '\0';
-        }
-        // 后台随时监听掉线
-        if (strstr(rx_buf, "WIFI DISCONNECT") != NULL) {
-            g_app.online = 0;
-            rx_idx = 0;
-            memset(rx_buf, 0, sizeof(rx_buf));
-        }
-        HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
+        s_frame_len   = 0u;
+        s_frame_ovf   = 0u;
+        s_frame_state = 0u;
+        break;
+    }
+
+    /* 3. 重新挂起：所有路径末尾都要执行，否则串口静默 */
+    if (HAL_UART_Receive_IT(&huart2, &rx_byte, 1u) != HAL_OK) {
+        Serial_RxErr++;
+    }
+}
+
+/* 溢出/帧错误/噪声：HAL 内部已结束接收，这里清标志并重新挂起 */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance != USART2) { return; }
+
+    __HAL_UART_CLEAR_OREFLAG(huart);    /* F1 HAL：读 SR + DR 清 ORE */
+
+    s_frame_len   = 0u;
+    s_frame_ovf   = 0u;
+    s_frame_state = 0u;
+
+    if (HAL_UART_Receive_IT(&huart2, &rx_byte, 1u) != HAL_OK) {
+        Serial_RxErr++;
     }
 }

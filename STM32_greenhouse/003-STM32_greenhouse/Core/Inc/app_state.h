@@ -33,12 +33,12 @@ typedef struct {
     uint8_t ysoil_th  ;   // 土壤湿度阈值
 }env_yth_t;
 
-/* 开关模型 */
+/* 执行器开关模型：字段名统一 X_on，与测量值 env_data、阈值 env_th 区分开 */
 typedef struct {
-    uint8_t fan   ;   // 风扇
-    uint8_t pump  ;   // 水泵
-    uint8_t humi  ;   // 加湿器
-    uint8_t ill   ;   // 补光灯
+    uint8_t fan_on ;   /* 风扇   ：温湿度(温度高)   -> RELAY1 */
+    uint8_t pump_on;   /* 水泵   ：土壤湿度(偏干)   -> RELAY4 */
+    uint8_t mist_on;   /* 加湿器 ：湿度(偏低)       -> RELAY2 */
+    uint8_t lamp_on;   /* 补光灯 ：光照(偏弱)       -> RELAY3 */
 }env_sw_t;
 
 /* 页面模型 */
@@ -61,6 +61,7 @@ typedef struct {
     uint8_t ctrl_mode;
     uint8_t alarm;
     uint8_t online;
+    uint32_t manual_tick;  /* 最后一次手动指令的 HAL_GetTick() 时刻 */
 
     /* 业务数据 */
     env_data_t env_data;

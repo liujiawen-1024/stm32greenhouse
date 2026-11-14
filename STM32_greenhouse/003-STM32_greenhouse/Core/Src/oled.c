@@ -369,16 +369,16 @@ void OLED_ShowState(const app_state_t *st) {
 	for (int i = 0; i < 2; i++) OLED_ShowCN(i<<4, 2, fan[i]);
 	const uint8_t water[2] = {42,43};
 	for (int i = 0; i < 2; i++) OLED_ShowCN(64+(i<<4), 2, water[i]);
-	for (int i = 0; i < 1; i++) OLED_ShowCN(40+(i<<4), 2, onoff[i+st->env_sw.fan]);
-	for (int i = 0; i < 1; i++) OLED_ShowCN(104+(i<<4), 2, onoff[i+st->env_sw.pump]);
+	for (int i = 0; i < 1; i++) OLED_ShowCN(40+(i<<4), 2, onoff[i+st->env_sw.fan_on]);
+	for (int i = 0; i < 1; i++) OLED_ShowCN(104+(i<<4), 2, onoff[i+st->env_sw.pump_on]);
 	/************加湿器***************/
 	const uint8_t humi[3] = {44,25,45};
 	for (int i = 0; i < 3; i++) OLED_ShowCN(i<<4, 4, humi[i]);
-	for (int i = 0; i < 1; i++) OLED_ShowCN(64+(i<<4), 4, onoff[i+st->env_sw.humi]);
+	for (int i = 0; i < 1; i++) OLED_ShowCN(64+(i<<4), 4, onoff[i+st->env_sw.mist_on]);
 	/************补光灯***************/
 	const uint8_t ill[3] = {46,47,48};
 	for (int i = 0; i < 3; i++) OLED_ShowCN(i<<4, 6, ill[i]);
-	for (int i = 0; i < 1; i++) OLED_ShowCN(64+(i<<4), 6, onoff[i+st->env_sw.ill]);
+	for (int i = 0; i < 1; i++) OLED_ShowCN(64+(i<<4), 6, onoff[i+st->env_sw.lamp_on]);
 }
 
 void OLED_SetData(const app_state_t *st) {

@@ -11,6 +11,7 @@ app_state_t g_app = {
     .ctrl_mode = 0,  /* 0 自动 1 手动 */
     .alarm = 1,      /* 0 报警 1 正常 */
     .online = 0,     /* 0 离线 1 在线 */
+    .manual_tick = 0u,
     .env_data = {0},
     .env_th = {25,60,30,40},
     .env_yth = {25,60,30,40},

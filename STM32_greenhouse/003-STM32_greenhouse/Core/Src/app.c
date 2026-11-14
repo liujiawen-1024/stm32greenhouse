@@ -53,7 +53,9 @@ void APP_Key(void) {
                 case 3: g_app.page%= 4;g_app.page++;g_app.cursor_th=0;g_app.cursor_sw=0;break;
                 case 4: if (g_app.page == 3) {g_app.cursor_sw = 0;g_app.cursor_th %= 4;g_app.cursor_th++;}
                         if (g_app.page == 4) {g_app.cursor_th = 1;g_app.cursor_sw %= 6;g_app.cursor_sw++;}break;
-                case 5: g_app.ctrl_mode = !g_app.ctrl_mode;break;
+                case 5: if (g_app.ctrl_mode == 0u) { APP_ManualTouch(); }   /* 切手动并起计时 */
+                        else { g_app.ctrl_mode = 0u; }                     /* 显式切回自动 */
+                    break;
                 case 6: if (g_app.cursor_th != 0) {data_sw = 1;}
                         if (g_app.ctrl_mode && g_app.cursor_th != 1){g_app.alarm = !g_app.alarm;}
                     break;
@@ -94,11 +96,14 @@ void APP_Key(void) {
     if (g_app.page == 4) {
         switch (g_app.cursor_sw) {
             case 1:if (data_sw == 1){data_sw = 0;g_app.alarm = !g_app.alarm;} break;
-            case 2:if (data_sw == 1){data_sw = 0;g_app.ctrl_mode = !g_app.ctrl_mode;} break;
-            case 3:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.fan = !g_app.env_sw.fan;} break;
-            case 4:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.pump = !g_app.env_sw.pump;} break;
-            case 5:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.humi = !g_app.env_sw.humi;} break;
-            case 6:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.ill  = !g_app.env_sw.ill ;} break;
+            case 2:if (data_sw == 1){data_sw = 0;
+                        if (g_app.ctrl_mode == 0u) { APP_ManualTouch(); }  /* 切手动并开始计时 */
+                        else { g_app.ctrl_mode = 0u; }                    /* 显式切回自动 */
+                    } break;
+            case 3:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.fan_on  = !g_app.env_sw.fan_on ;APP_ManualTouch();} break;
+            case 4:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.pump_on = !g_app.env_sw.pump_on;APP_ManualTouch();} break;
+            case 5:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.mist_on = !g_app.env_sw.mist_on;APP_ManualTouch();} break;
+            case 6:if (data_sw == 1&&g_app.ctrl_mode == 1){data_sw = 0;g_app.env_sw.lamp_on  = !g_app.env_sw.lamp_on ;APP_ManualTouch();} break;
             default:break;
         }
     }
@@ -128,37 +133,58 @@ void APP_Key(void) {
 }
 
 void APP_Data_Ctrl(void) {
-    uint8_t is_normal = 1; // 初始正常
+    const uint8_t is_auto = (g_app.ctrl_mode == 0u) ? 1u : 0u;
+    uint8_t is_normal = 1u;   /* 1 = 正常 */
+
     // 温度控制
-    if (g_app.env_data.temp >= g_app.env_th.temp_th) { // 超过上限
-        g_app.env_sw.fan = 1;   // 开风扇
-        is_normal = 0;          // 温度异常
+    if (g_app.env_data.temp >= g_app.env_th.temp_th) {   // 超过上限
+        is_normal = 0u;                                   // 温度异常
+        if (is_auto != 0u) { g_app.env_sw.fan_on = 1u; }     // 仅自动模式驱动风扇
     } else if (g_app.env_data.temp <= (g_app.env_th.temp_th - TEMP_HYSTERESIS)) {
-        g_app.env_sw.fan = 0;   // 低于下限：关风扇
+        if (is_auto != 0u) { g_app.env_sw.fan_on = 0u; }     // 低于下限：关风扇
     }
     // 湿度控制
-    if (g_app.env_data.humi <= g_app.env_th.humi_th) { // 低于下限
-        g_app.env_sw.humi = 1;  // 开加湿器
-        is_normal = 0;         // 湿度异常
+    if (g_app.env_data.humi <= g_app.env_th.humi_th) {   // 低于下限
+        is_normal = 0u;
+        if (is_auto != 0u) { g_app.env_sw.mist_on = 1u; }
     } else if (g_app.env_data.humi >= (g_app.env_th.humi_th + HUMI_HYSTERESIS)) {
-        g_app.env_sw.humi = 0;  // 高于上限：关加湿器
+        if (is_auto != 0u) { g_app.env_sw.mist_on = 0u; }
     }
     // 光照控制
-    if (g_app.env_data.ill <= g_app.env_th.ill_th) { // 低于下限
-        g_app.env_sw.ill = 1;   // 开补光灯
-        is_normal = 0;         // 光照异常
+    if (g_app.env_data.ill <= g_app.env_th.ill_th) {     // 低于下限
+        is_normal = 0u;
+        if (is_auto != 0u) { g_app.env_sw.lamp_on = 1u; }
     } else if (g_app.env_data.ill >= (g_app.env_th.ill_th + ILL_HYSTERESIS)) {
-        g_app.env_sw.ill = 0;   // 高于上限：关补光灯
+        if (is_auto != 0u) { g_app.env_sw.lamp_on = 0u; }
     }
     // 土壤控制
-    if (g_app.env_data.soil <= g_app.env_th.soil_th) { // 低于下限
-        g_app.env_sw.pump = 1;  // 开水泵
-        is_normal = 0;         // 土壤异常
+    if (g_app.env_data.soil <= g_app.env_th.soil_th) {   // 低于下限
+        is_normal = 0u;
+        if (is_auto != 0u) { g_app.env_sw.pump_on = 1u; }
     } else if (g_app.env_data.soil >= (g_app.env_th.soil_th + SOIL_HYSTERESIS)) {
-        g_app.env_sw.pump = 0;  // 高于上限：关水泵
+        if (is_auto != 0u) { g_app.env_sw.pump_on = 0u; }
     }
-    // 报警控制
-    g_app.alarm = is_normal;
+
+    // 报警由传感器决定；手动模式下不覆盖，避免冲掉用户手动设的报警位
+    if (is_auto != 0u) {
+        g_app.alarm = is_normal;
+    }
+}
+
+/* 任意一次手动动作：进入手动并刷新 1 分钟计时 */
+void APP_ManualTouch(void) {
+    g_app.ctrl_mode   = 1u;
+    g_app.manual_tick = HAL_GetTick();
+}
+
+/* 主循环每圈调用：手动期满自动回到自动模式 */
+void APP_ManualPoll(void) {
+    if (g_app.ctrl_mode == 0u) {
+        return;
+    }
+    if ((uint32_t)(HAL_GetTick() - g_app.manual_tick) >= MANUAL_HOLD_MS) {
+        g_app.ctrl_mode = 0u;    // 下一圈 APP_Data_Ctrl() 立即按阈值重新驱动
+    }
 }
 
 void APP_GET_DATA(void) {
